@@ -782,11 +782,25 @@ class NukeMCPServer(object):
         nuke = _get_nuke()
         if nuke.GUI:
             # executeInMainThread returns immediately without the result;
-            # the WithResult variant blocks until func has run.
+            # the WithResult variant blocks until func has run. An exception
+            # in the main thread does not reach the caller (Nuke prints it and
+            # returns None), so capture it here and re-raise in this thread.
+            box = {}
+
+            def call():
+                try:
+                    box["result"] = func(*args)
+                except Exception as e:
+                    box["error"] = e
+
             run = getattr(nuke, "executeInMainThreadWithResult", None)
             if run is not None:
-                return run(func, args=args)
-            return nuke.executeInMainThread(func, args=args)
+                run(call)
+            else:
+                nuke.executeInMainThread(call)
+            if "error" in box:
+                raise box["error"]
+            return box.get("result")
         if self._main_queue is not None:
             result_q = queue.Queue()
             self._main_queue.put((func, args, result_q))
@@ -802,7 +816,13 @@ class NukeMCPServer(object):
         _event_client_socket = client
 
         # Send handshake
-        handshake = self._run_in_nuke(_handshake_data)
+        try:
+            handshake = self._run_in_nuke(_handshake_data)
+        except Exception as e:
+            handshake = None
+            error = "Handshake failed: {}: {}".format(type(e).__name__, e)
+            self._emit_log(error)
+            self._send(client, {"type": "handshake", "status": "error", "error": error})
         if not isinstance(handshake, dict):
             try:
                 client.close()
