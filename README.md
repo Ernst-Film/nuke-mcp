@@ -14,6 +14,13 @@
   <a href="https://github.com/kleer001/nuke-mcp/stargazers"><img src="https://img.shields.io/github/stars/kleer001/nuke-mcp?style=social" alt="GitHub Stars"/></a>
 </p>
 
+> **ERNST fork.** Fork of [kleer001/nuke-mcp](https://github.com/kleer001/nuke-mcp) at `6cbed80`, adapted so the same addon also runs in **Nuke 12 (Python 2.7)**:
+> - `nuke_addon/nuke_mcp_addon.py` is Python 2.7 and 3 compatible (no f-strings or annotations, `Queue` fallback, `socket.error` handling) and uses `executeInMainThreadWithResult` in the GUI when available. The handshake also reports `python_version`.
+> - Server: on Nuke < 13 CopyCat is not registered, `setup_camera` creates `Camera2`, and the MCP instructions tell the client that `execute_python` code must be Python 2.7.
+> - Verified: test suite (113 passed) and an end-to-end socket test of the addon with Nuke 12.1v1's bundled Python 2.7.16. Not yet tested inside a running Nuke 12 GUI.
+>
+> One MCP registration serves Nuke 12 and 17 alike: the server adapts to whatever Nuke connects. Two registrations (different `--port`) are only needed when two Nukes run on the same machine at once.
+
 NukeMCP connects AI assistants (Claude, ChatGPT, local LLMs) to a running Nuke session via the [Model Context Protocol](https://modelcontextprotocol.io). Describe what you want in plain English, and the AI creates, connects, and configures nodes in your comp.
 
 ## Status

@@ -40,7 +40,7 @@ def register(server: NukeMCPServer):
             haperture: Horizontal aperture in mm.
         """
         return conn.send_command("create_node", {
-            "node_class": "Camera3",
+            "node_class": server.version.camera_class,
             "name": name,
             "knobs": {"focal": focal_length, "haperture": haperture},
         })

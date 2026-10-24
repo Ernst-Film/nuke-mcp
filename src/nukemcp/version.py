@@ -27,6 +27,20 @@ class NukeVersion:
     def at_least(self, major: int, minor: int = 0) -> bool:
         return (self.major, self.minor) >= (major, minor)
 
+    @property
+    def python2(self) -> bool:
+        """Nuke 12 and older embed Python 2.7; Nuke 13 moved to Python 3."""
+        return not self.at_least(13)
+
+    @property
+    def camera_class(self) -> str:
+        """Camera node class to create.
+
+        Camera3 is what Nuke 13+ creates; on Nuke 12 and older use Camera2,
+        which every version since Nuke 7 provides.
+        """
+        return "Camera3" if self.at_least(13) else "Camera2"
+
     def __str__(self) -> str:
         return f"{self.variant} {self.major}.{self.minor}{self.patch}"
 

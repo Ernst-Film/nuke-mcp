@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """NukeMCP Addon — Socket server running inside Nuke.
 
 This file runs inside Nuke's Python environment. It creates a TCP socket server
@@ -5,6 +6,10 @@ that listens for JSON commands from the NukeMCP MCP server, executes them in
 Nuke's main thread, and returns structured JSON responses.
 
 No external dependencies beyond what Nuke ships with.
+
+Runs on Python 2.7 (Nuke 12 and older) and Python 3 (Nuke 13+): no
+f-strings or annotations, and socket errors are caught as socket.error,
+which on Python 2 is not a subclass of OSError.
 
 Usage:
     In Nuke's Script Editor or init.py/menu.py:
@@ -14,9 +19,17 @@ Usage:
 
 import json
 import logging
-import queue
 import socket
+import sys
 import threading
+
+try:
+    import queue
+except ImportError:  # Python 2 (Nuke 12 and older)
+    import Queue as queue
+
+# On Python 2, socket.error derives from IOError, not OSError.
+_SOCKET_ERRORS = (OSError, socket.error)
 
 log = logging.getLogger("NukeMCP")
 
@@ -59,7 +72,7 @@ def _get_nuke():
     return nuke
 
 
-def _handshake_data() -> dict:
+def _handshake_data():
     nuke = _get_nuke()
     version = nuke.NUKE_VERSION_STRING
     if nuke.env.get("studio"):
@@ -74,14 +87,15 @@ def _handshake_data() -> dict:
         "nuke_version": version,
         "variant": variant,
         "pid": __import__("os").getpid(),
+        "python_version": "{}.{}".format(*sys.version_info[:2]),
     }
 
 
-def _handle_ping(params: dict) -> dict:
+def _handle_ping(params):
     return {"status": "ok", "result": "pong"}
 
 
-def _handle_get_script_info(params: dict) -> dict:
+def _handle_get_script_info(params):
     nuke = _get_nuke()
     root = nuke.root()
     return {
@@ -91,18 +105,23 @@ def _handle_get_script_info(params: dict) -> dict:
             "frame_range": [root["first_frame"].value(), root["last_frame"].value()],
             "fps": root["fps"].value(),
             "format": str(root.format()),
-            "colorspace": root["colorManagement"].value(),
+            "colorspace": _color_management(root),
             "node_count": len(nuke.allNodes()),
         },
     }
 
 
-def _handle_get_node_info(params: dict) -> dict:
+def _color_management(root):
+    knob = root.knob("colorManagement")
+    return knob.value() if knob else None
+
+
+def _handle_get_node_info(params):
     nuke = _get_nuke()
     name = params["node_name"]
     node = nuke.toNode(name)
     if not node:
-        return {"status": "error", "error": f"Node '{name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(name)}
 
     knobs = {}
     for knob_name in node.knobs():
@@ -129,7 +148,7 @@ def _handle_get_node_info(params: dict) -> dict:
     }
 
 
-def _handle_create_node(params: dict) -> dict:
+def _handle_create_node(params):
     nuke = _get_nuke()
     node_class = params["node_class"]
     name = params.get("name")
@@ -157,19 +176,19 @@ def _handle_create_node(params: dict) -> dict:
     }
 
 
-def _handle_modify_node(params: dict) -> dict:
+def _handle_modify_node(params):
     nuke = _get_nuke()
     name = params["node_name"]
     knobs = params["knobs"]
     node = nuke.toNode(name)
     if not node:
-        return {"status": "error", "error": f"Node '{name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(name)}
 
     # Validate all knob names before modifying any
     node_knobs = node.knobs()
     for k in knobs:
         if k not in node_knobs:
-            return {"status": "error", "error": f"Knob '{k}' not found on node '{name}'"}
+            return {"status": "error", "error": "Knob '{}' not found on node '{}'".format(k, name)}
 
     for k, v in knobs.items():
         node[k].setValue(v)
@@ -177,19 +196,19 @@ def _handle_modify_node(params: dict) -> dict:
     return {"status": "ok", "result": {"name": node.name(), "modified_knobs": list(knobs.keys())}}
 
 
-def _handle_delete_node(params: dict) -> dict:
+def _handle_delete_node(params):
     nuke = _get_nuke()
     name = params["node_name"]
     node = nuke.toNode(name)
     if not node:
-        return {"status": "error", "error": f"Node '{name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(name)}
 
     node_class = node.Class()
     nuke.delete(node)
     return {"status": "ok", "result": {"deleted": name, "class": node_class}}
 
 
-def _handle_connect_nodes(params: dict) -> dict:
+def _handle_connect_nodes(params):
     nuke = _get_nuke()
     output_name = params["output_node"]
     input_name = params["input_node"]
@@ -198,9 +217,9 @@ def _handle_connect_nodes(params: dict) -> dict:
     output_node = nuke.toNode(output_name)
     input_node = nuke.toNode(input_name)
     if not output_node:
-        return {"status": "error", "error": f"Node '{output_name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(output_name)}
     if not input_node:
-        return {"status": "error", "error": f"Node '{input_name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(input_name)}
 
     input_node.setInput(input_index, output_node)
     return {
@@ -213,19 +232,19 @@ def _handle_connect_nodes(params: dict) -> dict:
     }
 
 
-def _handle_position_node(params: dict) -> dict:
+def _handle_position_node(params):
     nuke = _get_nuke()
     name = params["node_name"]
     node = nuke.toNode(name)
     if not node:
-        return {"status": "error", "error": f"Node '{name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(name)}
 
     node.setXpos(int(params["x"]))
     node.setYpos(int(params["y"]))
     return {"status": "ok", "result": {"name": node.name(), "xpos": node.xpos(), "ypos": node.ypos()}}
 
 
-def _handle_auto_layout(params: dict) -> dict:
+def _handle_auto_layout(params):
     nuke = _get_nuke()
     node_names = params.get("node_names")
     if node_names:
@@ -242,13 +261,13 @@ def _handle_auto_layout(params: dict) -> dict:
     return {"status": "ok", "result": {"laid_out": len(nodes)}}
 
 
-def _handle_execute_python(params: dict) -> dict:
+def _handle_execute_python(params):
     code = params["code"]
     local_vars = {}
     try:
         exec(code, {"nuke": _get_nuke(), "__builtins__": __builtins__}, local_vars)  # noqa: S102
     except Exception as e:
-        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+        return {"status": "error", "error": "{}: {}".format(type(e).__name__, e)}
     # Return whatever was assigned to 'result' in the executed code, or None
     result = local_vars.get("result")
     # Try to serialize; fall back to str
@@ -259,14 +278,14 @@ def _handle_execute_python(params: dict) -> dict:
     return {"status": "ok", "result": result}
 
 
-def _handle_load_script(params: dict) -> dict:
+def _handle_load_script(params):
     nuke = _get_nuke()
     path = params["path"]
     nuke.scriptOpen(path)
     return {"status": "ok", "result": {"loaded": path, "node_count": len(nuke.allNodes())}}
 
 
-def _handle_save_script(params: dict) -> dict:
+def _handle_save_script(params):
     nuke = _get_nuke()
     path = params.get("path")
     if path:
@@ -277,7 +296,7 @@ def _handle_save_script(params: dict) -> dict:
     return {"status": "ok", "result": {"saved": path}}
 
 
-def _handle_set_project_settings(params: dict) -> dict:
+def _handle_set_project_settings(params):
     nuke = _get_nuke()
     root = nuke.root()
     modified = []
@@ -285,22 +304,25 @@ def _handle_set_project_settings(params: dict) -> dict:
         root["fps"].setValue(float(params["fps"]))
         modified.append("fps")
     if "colorspace" in params:
-        root["colorManagement"].setValue(params["colorspace"])
+        knob = root.knob("colorManagement")
+        if knob is None:
+            return {"status": "error", "error": "This Nuke has no colorManagement knob"}
+        knob.setValue(params["colorspace"])
         modified.append("colorspace")
     if "resolution" in params:
         w, h = params["resolution"]
-        fmt = nuke.addFormat(f"{w} {h} custom")
+        fmt = nuke.addFormat("{} {} custom".format(w, h))
         root["format"].setValue(fmt)
         modified.append("resolution")
     return {"status": "ok", "result": {"modified": modified}}
 
 
-def _handle_set_frame_range(params: dict) -> dict:
+def _handle_set_frame_range(params):
     nuke = _get_nuke()
     first = int(params["first"])
     last = int(params["last"])
     if first > last:
-        return {"status": "error", "error": f"first ({first}) must be <= last ({last})"}
+        return {"status": "error", "error": "first ({}) must be <= last ({})".format(first, last)}
     root = nuke.root()
     root["first_frame"].setValue(first)
     root["last_frame"].setValue(last)
@@ -311,26 +333,26 @@ def _handle_set_frame_range(params: dict) -> dict:
 
 
 
-def _handle_render_frames(params: dict) -> dict:
+def _handle_render_frames(params):
     nuke = _get_nuke()
     write_node = params["write_node"]
     node = nuke.toNode(write_node)
     if not node:
-        return {"status": "error", "error": f"Node '{write_node}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(write_node)}
     first = params.get("first_frame", nuke.root()["first_frame"].value())
     last = params.get("last_frame", nuke.root()["last_frame"].value())
     nuke.execute(node, int(first), int(last))
     return {"status": "ok", "result": {"rendered": write_node, "first_frame": first, "last_frame": last}}
 
 
-def _handle_set_proxy_mode(params: dict) -> dict:
+def _handle_set_proxy_mode(params):
     nuke = _get_nuke()
     enabled = params["enabled"]
     nuke.root()["proxy"].setValue(enabled)
     return {"status": "ok", "result": {"proxy_mode": enabled}}
 
 
-def _handle_find_nodes_by_type(params: dict) -> dict:
+def _handle_find_nodes_by_type(params):
     nuke = _get_nuke()
     node_class = params["node_class"]
     if node_class == "*":
@@ -345,7 +367,7 @@ def _handle_find_nodes_by_type(params: dict) -> dict:
     }
 
 
-def _handle_find_broken_reads(params: dict) -> dict:
+def _handle_find_broken_reads(params):
     nuke = _get_nuke()
     broken = []
     for node in nuke.allNodes("Read"):
@@ -355,7 +377,7 @@ def _handle_find_broken_reads(params: dict) -> dict:
     return {"status": "ok", "result": {"broken_reads": broken}}
 
 
-def _handle_find_error_nodes(params: dict) -> dict:
+def _handle_find_error_nodes(params):
     nuke = _get_nuke()
     errors = []
     for node in nuke.allNodes():
@@ -364,7 +386,7 @@ def _handle_find_error_nodes(params: dict) -> dict:
     return {"status": "ok", "result": {"nodes": errors}}
 
 
-def _handle_batch_set_knob(params: dict) -> dict:
+def _handle_batch_set_knob(params):
     nuke = _get_nuke()
     node_names = params["node_names"]
     knob_name = params["knob_name"]
@@ -378,14 +400,14 @@ def _handle_batch_set_knob(params: dict) -> dict:
     return {"status": "ok", "result": {"modified": modified, "knob": knob_name}}
 
 
-def _handle_batch_reconnect(params: dict) -> dict:
+def _handle_batch_reconnect(params):
     nuke = _get_nuke()
     node_names = params["node_names"]
     new_input = params["new_input"]
     input_index = params.get("input_index", 0)
     source = nuke.toNode(new_input)
     if not source:
-        return {"status": "error", "error": f"Node '{new_input}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(new_input)}
     reconnected = []
     for name in node_names:
         node = nuke.toNode(name)
@@ -395,7 +417,7 @@ def _handle_batch_reconnect(params: dict) -> dict:
     return {"status": "ok", "result": {"reconnected": reconnected}}
 
 
-def _handle_list_toolsets(params: dict) -> dict:
+def _handle_list_toolsets(params):
     import os
     toolset_dir = os.path.join(os.path.expanduser("~"), ".nuke", "ToolSets")
     toolsets = []
@@ -406,14 +428,14 @@ def _handle_list_toolsets(params: dict) -> dict:
     return {"status": "ok", "result": {"toolsets": toolsets}}
 
 
-def _handle_load_toolset(params: dict) -> dict:
+def _handle_load_toolset(params):
     nuke = _get_nuke()
     name = params["name"]
     nuke.loadToolset(name)
     return {"status": "ok", "result": {"loaded": name}}
 
 
-def _handle_save_toolset(params: dict) -> dict:
+def _handle_save_toolset(params):
     nuke = _get_nuke()
     name = params["name"]
     node_names = params["node_names"]
@@ -428,7 +450,7 @@ def _handle_save_toolset(params: dict) -> dict:
     return {"status": "ok", "result": {"saved": name, "nodes": node_names}}
 
 
-def _handle_create_live_group(params: dict) -> dict:
+def _handle_create_live_group(params):
     nuke = _get_nuke()
     name = params["name"]
     node_names = params["node_names"]
@@ -447,25 +469,25 @@ def _handle_create_live_group(params: dict) -> dict:
 
 
 
-def _handle_create_tracker(params: dict) -> dict:
+def _handle_create_tracker(params):
     nuke = _get_nuke()
     source = params["source_node"]
     name = params.get("name", "tracker")
     source_node = nuke.toNode(source)
     if not source_node:
-        return {"status": "error", "error": f"Node '{source}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(source)}
     tracker = nuke.createNode("Tracker4", inpanel=False)
     tracker.setName(name)
     tracker.setInput(0, source_node)
     return {"status": "ok", "result": {"name": tracker.name(), "class": "Tracker4", "source": source}}
 
 
-def _handle_solve_tracker(params: dict) -> dict:
+def _handle_solve_tracker(params):
     nuke = _get_nuke()
     tracker_name = params["tracker_node"]
     node = nuke.toNode(tracker_name)
     if not node:
-        return {"status": "error", "error": f"Node '{tracker_name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(tracker_name)}
     first = params.get("first_frame", nuke.root()["first_frame"].value())
     last = params.get("last_frame", nuke.root()["last_frame"].value())
     # Execute tracking via nuke.execute on the Tracker node
@@ -473,7 +495,7 @@ def _handle_solve_tracker(params: dict) -> dict:
     return {"status": "ok", "result": {"solved": tracker_name, "frames": [first, last]}}
 
 
-def _handle_setup_stabilize(params: dict) -> dict:
+def _handle_setup_stabilize(params):
     nuke = _get_nuke()
     source = params["source_node"]
     tracker = params["tracker_node"]
@@ -481,41 +503,41 @@ def _handle_setup_stabilize(params: dict) -> dict:
     source_node = nuke.toNode(source)
     tracker_node = nuke.toNode(tracker)
     if not source_node:
-        return {"status": "error", "error": f"Node '{source}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(source)}
     if not tracker_node:
-        return {"status": "error", "error": f"Node '{tracker}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(tracker)}
     # Use the Tracker4 node itself in stabilize mode rather than a separate node
     tracker_node["transform"].setValue("stabilize")
     tracker_node.setInput(0, source_node)
     return {"status": "ok", "result": {"name": tracker_node.name(), "source": source, "tracker": tracker}}
 
 
-def _handle_create_camera_tracker(params: dict) -> dict:
+def _handle_create_camera_tracker(params):
     nuke = _get_nuke()
     source = params["source_node"]
     name = params.get("name", "camera_tracker")
     source_node = nuke.toNode(source)
     if not source_node:
-        return {"status": "error", "error": f"Node '{source}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(source)}
     ct = nuke.createNode("CameraTracker", inpanel=False)
     ct.setName(name)
     ct.setInput(0, source_node)
     return {"status": "ok", "result": {"name": ct.name(), "class": "CameraTracker", "source": source}}
 
 
-def _handle_train_copycat(params: dict) -> dict:
+def _handle_train_copycat(params):
     nuke = _get_nuke()
     node_name = params["copycat_node"]
     epochs = params.get("epochs", 1000)
     node = nuke.toNode(node_name)
     if not node:
-        return {"status": "error", "error": f"Node '{node_name}' not found"}
+        return {"status": "error", "error": "Node '{}' not found".format(node_name)}
     node["numIterations"].setValue(epochs)
     node["trainButton"].execute()
     return {"status": "ok", "result": {"trained": node_name, "epochs": epochs}}
 
 
-def _handle_create_annotation(params: dict) -> dict:
+def _handle_create_annotation(params):
     nuke = _get_nuke()
     text = params["text"]
     name = params.get("name", "annotation")
@@ -533,7 +555,7 @@ def _handle_create_annotation(params: dict) -> dict:
     return {"status": "ok", "result": {"name": node.name(), "text": text}}
 
 
-def _handle_list_annotations(params: dict) -> dict:
+def _handle_list_annotations(params):
     nuke = _get_nuke()
     annotations = []
     for node in nuke.allNodes("StickyNote"):
@@ -550,7 +572,7 @@ _event_socket_lock = threading.Lock()
 _registered_callbacks = set()
 
 
-def _push_event(event_type: str, data: dict):
+def _push_event(event_type, data):
     """Push an event to the connected MCP client."""
     if _event_client_socket is None:
         return
@@ -559,7 +581,7 @@ def _push_event(event_type: str, data: dict):
     with _event_socket_lock:
         try:
             _event_client_socket.sendall(msg.encode("utf-8"))
-        except OSError:
+        except _SOCKET_ERRORS:
             pass
 
 
@@ -594,7 +616,7 @@ def _on_script_saved():
     _push_event("script_saved", {})
 
 
-def _handle_subscribe_events(params: dict) -> dict:
+def _handle_subscribe_events(params):
     global _registered_callbacks
     event_types = params.get("event_types", [])
 
@@ -671,15 +693,15 @@ class _Signaller(QObject):
     log_signal = Signal(str)
 
 
-class NukeMCPServer:
+class NukeMCPServer(object):
     """TCP socket server that listens for JSON commands from the MCP server."""
 
-    def __init__(self, port: int = DEFAULT_PORT):
+    def __init__(self, port=DEFAULT_PORT):
         self.port = port
-        self._server_sock: socket.socket | None = None
+        self._server_sock = None
         self._running = False
-        self._thread: threading.Thread | None = None
-        self._main_queue: queue.Queue | None = None
+        self._thread = None
+        self._main_queue = None
         try:
             self._signaller = _Signaller()
         except RuntimeError:
@@ -695,7 +717,8 @@ class NukeMCPServer:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread = threading.Thread(target=self._serve)
+        self._thread.daemon = True
         self._thread.start()
         log.info("NukeMCP server started on port %d", self.port)
 
@@ -729,7 +752,7 @@ class NukeMCPServer:
         if self._server_sock:
             try:
                 self._server_sock.close()
-            except OSError:
+            except _SOCKET_ERRORS:
                 pass
             self._server_sock = None
         log.info("NukeMCP server stopped")
@@ -740,17 +763,17 @@ class NukeMCPServer:
         self._server_sock.settimeout(1.0)
         self._server_sock.bind(("127.0.0.1", self.port))
         self._server_sock.listen(1)
-        self._emit_log(f"Listening on port {self.port}")
+        self._emit_log("Listening on port {}".format(self.port))
 
         while self._running:
             try:
                 client, addr = self._server_sock.accept()
             except socket.timeout:
                 continue
-            except OSError:
+            except _SOCKET_ERRORS:
                 break
 
-            self._emit_log(f"Client connected from {addr[0]}:{addr[1]}")
+            self._emit_log("Client connected from {}:{}".format(addr[0], addr[1]))
             self._handle_client(client)
             self._emit_log("Client disconnected")
 
@@ -758,6 +781,11 @@ class NukeMCPServer:
         """Call func in Nuke's main thread (GUI) or via queue (headless)."""
         nuke = _get_nuke()
         if nuke.GUI:
+            # executeInMainThread returns immediately without the result;
+            # the WithResult variant blocks until func has run.
+            run = getattr(nuke, "executeInMainThreadWithResult", None)
+            if run is not None:
+                return run(func, args=args)
             return nuke.executeInMainThread(func, args=args)
         if self._main_queue is not None:
             result_q = queue.Queue()
@@ -768,7 +796,7 @@ class NukeMCPServer:
             return result
         return func(*args)
 
-    def _handle_client(self, client: socket.socket):
+    def _handle_client(self, client):
         global _event_client_socket
         client.settimeout(None)
         _event_client_socket = client
@@ -778,7 +806,7 @@ class NukeMCPServer:
         if not isinstance(handshake, dict):
             try:
                 client.close()
-            except OSError:
+            except _SOCKET_ERRORS:
                 pass
             return
         self._send(client, handshake)
@@ -787,7 +815,7 @@ class NukeMCPServer:
         while self._running:
             try:
                 chunk = client.recv(1024 * 1024)
-            except OSError:
+            except _SOCKET_ERRORS:
                 break
             if not chunk:
                 break
@@ -797,40 +825,40 @@ class NukeMCPServer:
                 line, buffer = buffer.split(b"\n", 1)
                 try:
                     command = json.loads(line.decode("utf-8"))
-                except json.JSONDecodeError as e:
-                    self._send(client, {"status": "error", "error": f"Invalid JSON: {e}"})
+                except ValueError as e:  # json.JSONDecodeError is a ValueError
+                    self._send(client, {"status": "error", "error": "Invalid JSON: {}".format(e)})
                     continue
 
                 cmd_type = command.get("type", "")
                 params = command.get("params", {})
-                self._emit_log(f"<- {cmd_type}")
+                self._emit_log("<- {}".format(cmd_type))
 
                 handler = COMMANDS.get(cmd_type)
                 if not handler:
-                    response = {"status": "error", "error": f"Unknown command: {cmd_type}"}
+                    response = {"status": "error", "error": "Unknown command: {}".format(cmd_type)}
                 else:
                     try:
                         response = self._run_in_nuke(handler, params)
                     except Exception as e:
-                        response = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+                        response = {"status": "error", "error": "{}: {}".format(type(e).__name__, e)}
 
                 self._send(client, response)
-                self._emit_log(f"-> {response.get('status', '?')}")
+                self._emit_log("-> {}".format(response.get('status', '?')))
 
         _event_client_socket = None
         try:
             client.close()
-        except OSError:
+        except _SOCKET_ERRORS:
             pass
 
-    def _send(self, client: socket.socket, data: dict):
+    def _send(self, client, data):
         msg = json.dumps(data) + "\n"
         try:
             client.sendall(msg.encode("utf-8"))
-        except OSError:
+        except _SOCKET_ERRORS:
             pass
 
-    def _emit_log(self, msg: str):
+    def _emit_log(self, msg):
         log.info(msg)
         if self._signaller:
             self._signaller.log_signal.emit(msg)
@@ -843,19 +871,19 @@ class NukeMCPServer:
 class NukeMCPPanel(QWidget):
     """Dockable panel showing NukeMCP server status and log."""
 
-    def __init__(self, port: int = DEFAULT_PORT, parent=None):
-        super().__init__(parent)
+    def __init__(self, port=DEFAULT_PORT, parent=None):
+        super(NukeMCPPanel, self).__init__(parent)
         self.setWindowTitle("NukeMCP")
         self.setMinimumWidth(300)
         self.setMinimumHeight(200)
 
         self._port = port
-        self._server: NukeMCPServer | None = None
+        self._server = None
 
         # Status row
         status_layout = QHBoxLayout()
         self._status_label = QLabel("Stopped")
-        self._port_label = QLabel(f"Port: {self._port}")
+        self._port_label = QLabel("Port: {}".format(self._port))
         self._toggle_btn = QPushButton("Start")
         self._toggle_btn.clicked.connect(self._toggle_server)
         status_layout.addWidget(self._status_label)
@@ -886,7 +914,7 @@ class NukeMCPPanel(QWidget):
             self._status_label.setText("Running")
             self._toggle_btn.setText("Stop")
 
-    def _append_log(self, msg: str):
+    def _append_log(self, msg):
         self._log.append(msg)
         # Keep last 200 lines
         doc = self._log.document()
@@ -907,7 +935,7 @@ class NukeMCPPanel(QWidget):
 _panel = None
 
 
-def start(port: int = DEFAULT_PORT):
+def start(port=DEFAULT_PORT):
     """Start the NukeMCP server and show the panel. Call from menu.py or Script Editor."""
     global _panel
     if _panel is None:

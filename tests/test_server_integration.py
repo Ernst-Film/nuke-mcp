@@ -85,3 +85,23 @@ def test_server_old_version_no_17_tools():
     assert "create_annotation" not in tool_names
     # But NukeX tools for older versions should be
     assert "create_tracker" in tool_names
+
+
+def test_server_nuke12_python2():
+    """Nuke 12 (Python 2.7): no CopyCat, and execute_python gets a 2.7 hint."""
+    port = _find_free_port()
+    mcp = build_server(port=port, mock=True, mock_version="12.1v1", mock_variant="NukeX")
+    tool_names = _get_tool_names(mcp)
+    assert "setup_copycat" not in tool_names
+    assert "train_copycat" not in tool_names
+    assert "import_splat" not in tool_names
+    assert "create_tracker" in tool_names
+    assert "setup_camera" in tool_names
+    assert "execute_python" in tool_names
+    assert "Python 2.7" in mcp.instructions
+
+
+def test_server_nuke17_no_python2_hint():
+    port = _find_free_port()
+    mcp = build_server(port=port, mock=True, mock_version="17.0v1", mock_variant="NukeX")
+    assert "Python 2.7" not in mcp.instructions

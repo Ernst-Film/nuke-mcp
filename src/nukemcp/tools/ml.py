@@ -11,7 +11,8 @@ if TYPE_CHECKING:
 
 
 def register(server: NukeMCPServer):
-    if not server.version.is_nukex:
+    # CopyCat arrived in NukeX 13; BigCat (below) needs 17.
+    if not server.version.is_nukex or not server.version.at_least(13):
         return
 
     mcp = server.mcp

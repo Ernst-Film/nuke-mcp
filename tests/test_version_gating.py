@@ -64,3 +64,15 @@ def test_handshake_connection(connection):
     assert connection.handshake["type"] == "handshake"
     assert "nuke_version" in connection.handshake
     assert "variant" in connection.handshake
+
+
+def test_python2_before_13():
+    assert NukeVersion(12, 1, "v1", "Nuke").python2
+    assert not NukeVersion(13, 0, "v1", "Nuke").python2
+    assert not NukeVersion(17, 0, "v1", "Nuke").python2
+
+
+def test_camera_class():
+    assert NukeVersion(12, 1, "v1", "NukeX").camera_class == "Camera2"
+    assert NukeVersion(13, 0, "v1", "NukeX").camera_class == "Camera3"
+    assert NukeVersion(17, 0, "v1", "NukeX").camera_class == "Camera3"

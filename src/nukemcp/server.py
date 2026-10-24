@@ -67,16 +67,22 @@ def build_server(
     version = parse_version(handshake)
     log.info("Connected to %s", version)
 
-    mcp = FastMCP(
-        "NukeMCP",
-        instructions=(
-            f"You are connected to {version}. "
-            "Use the available tools to inspect and modify the Nuke script. "
-            "Always check the current state with get_script_info or get_node_info "
-            "before making changes. Never delete nodes or execute code without "
-            "user confirmation (set confirm=True only after the user agrees)."
-        ),
+    instructions = (
+        f"You are connected to {version}. "
+        "Use the available tools to inspect and modify the Nuke script. "
+        "Always check the current state with get_script_info or get_node_info "
+        "before making changes. Never delete nodes or execute code without "
+        "user confirmation (set confirm=True only after the user agrees)."
     )
+    if version.python2:
+        instructions += (
+            " This Nuke embeds Python 2.7: code passed to execute_python must be "
+            "Python 2.7 compatible (no f-strings, no type annotations, use "
+            "'{}'.format(), print as a function only with "
+            "'from __future__ import print_function')."
+        )
+
+    mcp = FastMCP("NukeMCP", instructions=instructions)
 
     server = NukeMCPServer(mcp, conn, version, mock_server=mock_server)
 
