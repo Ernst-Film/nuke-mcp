@@ -91,6 +91,34 @@ def _handshake_data():
     }
 
 
+def _jsonable(value):
+    """Turn a value into something json.dumps accepts.
+
+    Knob values include Nuke objects (e.g. Viewer's wipe_position is a
+    Matrix4) and, on Python 2, byte strings that need not be UTF-8.
+    """
+    if isinstance(value, dict):
+        return dict((str(k), _jsonable(v)) for k, v in value.items())
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if value is None or isinstance(value, (bool, int, float)) or type(value).__name__ in ("str", "unicode", "long"):
+        return value
+    try:
+        return str(value)
+    except Exception:
+        return repr(value)
+
+
+def _encode(data):
+    try:
+        text = json.dumps(data)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        text = json.dumps(_jsonable(data))
+    return (text + "\n").encode("utf-8")
+
+
 def _handle_ping(params):
     return {"status": "ok", "result": "pong"}
 
@@ -585,7 +613,7 @@ def _push_event(event_type, data):
     if not _event_clients:
         return
     event = {"type": "event", "event_type": event_type, "data": data}
-    msg = (json.dumps(event) + "\n").encode("utf-8")
+    msg = _encode(event)
     with _send_lock:
         for client in list(_event_clients):
             try:
@@ -880,7 +908,15 @@ class NukeMCPServer(object):
                     except Exception as e:
                         response = {"status": "error", "error": "{}: {}".format(type(e).__name__, e)}
 
-                self._send(client, response)
+                if not isinstance(response, dict):
+                    response = {"status": "error", "error": "Handler returned no result"}
+                try:
+                    self._send(client, response)
+                except Exception as e:
+                    # Never let one bad response kill the connection.
+                    error = "Could not send response: {}: {}".format(type(e).__name__, e)
+                    self._emit_log(error)
+                    self._send(client, {"status": "error", "error": error})
                 self._emit_log("-> {}".format(response.get('status', '?')))
 
         try:
@@ -889,7 +925,7 @@ class NukeMCPServer(object):
             pass
 
     def _send(self, client, data):
-        msg = (json.dumps(data) + "\n").encode("utf-8")
+        msg = _encode(data)
         with _send_lock:
             try:
                 client.sendall(msg)
