@@ -764,23 +764,9 @@ class NukeMCPServer(object):
 
     def _serve(self):
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        if sys.platform == "win32":
-            # On Windows SO_REUSEADDR lets a second Nuke bind the same port
-            # and silently take over; claim it exclusively instead.
-            self._server_sock.setsockopt(
-                socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)  # -5 = ~SO_REUSEADDR
-        else:
-            self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_sock.settimeout(1.0)
-        try:
-            self._server_sock.bind(("127.0.0.1", self.port))
-        except _SOCKET_ERRORS as e:
-            # Typically another Nuke already serves this port.
-            self._emit_log("Port {} not available ({}), server not started".format(self.port, e))
-            self._running = False
-            self._server_sock.close()
-            self._server_sock = None
-            return
+        self._server_sock.bind(("127.0.0.1", self.port))
         self._server_sock.listen(1)
         self._emit_log("Listening on port {}".format(self.port))
 
@@ -972,29 +958,11 @@ class NukeMCPPanel(QWidget):
 # ---------------------------------------------------------------------------
 
 _panel = None
-_background_server = None
-
-
-def autostart(port=DEFAULT_PORT):
-    """Start the server without the panel, e.g. from menu.py at Nuke startup.
-
-    If the port is taken (a second Nuke on this machine), the server logs it
-    and stays off; that Nuke can still be served via the panel on another port.
-    """
-    global _background_server
-    if _background_server is None or not _background_server._running:
-        _background_server = NukeMCPServer(port)
-        _background_server.start()
-    return _background_server
 
 
 def start(port=DEFAULT_PORT):
     """Start the NukeMCP server and show the panel. Call from menu.py or Script Editor."""
-    global _panel, _background_server
-    # The panel runs its own server; hand the port over from autostart.
-    if _background_server is not None:
-        _background_server.stop()
-        _background_server = None
+    global _panel
     if _panel is None:
         _panel = NukeMCPPanel(port=port)
     _panel.show()
