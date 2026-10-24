@@ -104,11 +104,16 @@ def _handle_get_script_info(params):
             "name": root.name(),
             "frame_range": [root["first_frame"].value(), root["last_frame"].value()],
             "fps": root["fps"].value(),
-            "format": str(root.format()),
+            "format": _format_text(root.format()),
             "colorspace": _color_management(root),
             "node_count": len(nuke.allNodes()),
         },
     }
+
+
+def _format_text(fmt):
+    # str(Format) is "<Format object at ...>" on Nuke 12
+    return "{} {}x{}".format(fmt.name() or "custom", fmt.width(), fmt.height())
 
 
 def _color_management(root):
