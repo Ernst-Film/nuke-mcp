@@ -572,22 +572,26 @@ def _handle_list_annotations(params):
 
 
 
-_event_client_socket = None
-_event_socket_lock = threading.Lock()
+# All connected MCP clients (Claude Desktop starts the server more than once,
+# e.g. for chat and for agent mode). Every socket write goes through
+# _send_lock so a response and an event never interleave on the wire.
+_event_clients = set()
+_send_lock = threading.Lock()
 _registered_callbacks = set()
 
 
 def _push_event(event_type, data):
-    """Push an event to the connected MCP client."""
-    if _event_client_socket is None:
+    """Push an event to all connected MCP clients."""
+    if not _event_clients:
         return
     event = {"type": "event", "event_type": event_type, "data": data}
-    msg = json.dumps(event) + "\n"
-    with _event_socket_lock:
-        try:
-            _event_client_socket.sendall(msg.encode("utf-8"))
-        except _SOCKET_ERRORS:
-            pass
+    msg = (json.dumps(event) + "\n").encode("utf-8")
+    with _send_lock:
+        for client in list(_event_clients):
+            try:
+                client.sendall(msg)
+            except _SOCKET_ERRORS:
+                pass
 
 
 def _on_node_created():
@@ -767,7 +771,7 @@ class NukeMCPServer(object):
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_sock.settimeout(1.0)
         self._server_sock.bind(("127.0.0.1", self.port))
-        self._server_sock.listen(1)
+        self._server_sock.listen(5)
         self._emit_log("Listening on port {}".format(self.port))
 
         while self._running:
@@ -778,9 +782,19 @@ class NukeMCPServer(object):
             except _SOCKET_ERRORS:
                 break
 
-            self._emit_log("Client connected from {}:{}".format(addr[0], addr[1]))
+            # One thread per client; nuke commands still run one at a time
+            # in Nuke's main thread.
+            worker = threading.Thread(target=self._client_thread, args=(client, addr))
+            worker.daemon = True
+            worker.start()
+
+    def _client_thread(self, client, addr):
+        self._emit_log("Client connected from {}:{}".format(addr[0], addr[1]))
+        try:
             self._handle_client(client)
-            self._emit_log("Client disconnected")
+        finally:
+            _event_clients.discard(client)
+        self._emit_log("Client disconnected")
 
     def _run_in_nuke(self, func, *args):
         """Call func in Nuke's main thread (GUI) or via queue (headless)."""
@@ -816,9 +830,7 @@ class NukeMCPServer(object):
         return func(*args)
 
     def _handle_client(self, client):
-        global _event_client_socket
         client.settimeout(None)
-        _event_client_socket = client
 
         # Send handshake
         try:
@@ -835,6 +847,7 @@ class NukeMCPServer(object):
                 pass
             return
         self._send(client, handshake)
+        _event_clients.add(client)
 
         buffer = b""
         while self._running:
@@ -870,18 +883,18 @@ class NukeMCPServer(object):
                 self._send(client, response)
                 self._emit_log("-> {}".format(response.get('status', '?')))
 
-        _event_client_socket = None
         try:
             client.close()
         except _SOCKET_ERRORS:
             pass
 
     def _send(self, client, data):
-        msg = json.dumps(data) + "\n"
-        try:
-            client.sendall(msg.encode("utf-8"))
-        except _SOCKET_ERRORS:
-            pass
+        msg = (json.dumps(data) + "\n").encode("utf-8")
+        with _send_lock:
+            try:
+                client.sendall(msg)
+            except _SOCKET_ERRORS:
+                pass
 
     def _emit_log(self, msg):
         log.info(msg)
